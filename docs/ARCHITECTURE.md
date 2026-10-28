@@ -31,7 +31,7 @@ way:
 | physical state transition       | `RawEvent` in the hash-chained trace              | Implemented (as the *record* of a transition; see note) |
 | machine-readable abstraction    | `Representation` (the deterministic fold)         | Implemented |
 | human-readable / UI             | consumer of `Representation` + `ReconcileReport`  | Seam (front end swaps in) |
-| "which layer is asking?" gate   | `reconcile` + the `FloorProbe` trichotomy         | Implemented (software gate); full Negotiator is Design-level |
+| "which layer is asking?" gate   | `negotiator.ts` + `layers.ts` — classify origin rung, formulate across the stack | **Implemented** |
 
 **Note on rung 1.** The trace records transitions handed to it by an
 `EventSource` / `FloorProbe`. Capturing the *actual silicon* transition (the
@@ -45,7 +45,7 @@ it requires a host/hardware adapter (see "Initiator", below).
 | **Reconciler** | Algorithmic state-comparison engine | `reconciler.ts` — **Implemented**. Re-folds the trace, diffs every field (including ρ), re-verifies the chain. |
 | **Initiator** (as a data structure) | Immutable append-only ledger of state transitions | `event-log.ts` + `hash.ts` — **Implemented**. Tamper-evident hash chain; `verifyChain` pinpoints any break. |
 | **Initiator** (as "Ring -1 / VMX-root substrate") | Bare-metal capture of memory, registers, interrupts | **Design-level.** Not reachable from a JS runtime. Belongs to a host/hypervisor adapter behind the `EventSource` seam, written in C/Rust/asm — a separate project, not this module. |
-| **Negotiator** | Super-compiler / representation gate: asks *which layer* a request comes from and whether the representation along the stack is sufficient | Partially **Implemented** as the reconciliation gate (sufficiency = "does the representation reconcile with the trace?"). The full "classify the requesting layer and negotiate a sufficient representation across rungs" is **Design-level** — see "Open design questions". |
+| **Negotiator** | Super-compiler / representation gate: asks *which layer* a request comes from and whether the representation along the stack is sufficient | **Implemented** (`negotiator.ts` + `layers.ts`). Classifies a request's origin rung from its evidence, formulates the asked-for fields down to the trace, and returns either a sufficient representation or the minimum requirement to make it so. Sufficiency is defined mechanically — see "The Negotiator" below. |
 | **Twins** (parity O₁ = O₂) | Dual backend actors; block unless outputs are identical | **Design-level** (software-modelable). A parity gate over two `Representation`-producing engines is implementable honestly as a pure comparison; it is not built yet. |
 | **Mayor** | Silicon-only witness; compares Twins' output to raw telemetry | **Design-level.** Depends on a real telemetry source (the hardware adapter). Modelable as a witness that only reads the trace, never the representation. |
 | **Governor** | Dual-visibility circuit breaker; lockdown | **Design-level.** A breaker over `ReconcileReport` (trip on `ok === false`) is implementable; the hardware-telemetry half needs the adapter. |
@@ -90,16 +90,72 @@ as written they don't hold:
 Neither caution blocks the core above — the trace, projection, reconciler, and
 floor probe stand on their own and are fully implemented and tested.
 
+## The Negotiator (implemented)
+
+`negotiator.ts` + `layers.ts` turn the "super-compiler" description into code: a
+record is never simply handed out; a request is classified, a representation is
+formulated down the stack, and the result is judged sufficient or insufficient.
+
+**The rung stack** (`layers.ts`), ground-truth-first — lower is more authoritative:
+
+```
+  VOLTAGE  →  MACHINE  →  CODE  →  INTERFACE
+  (physical   (hash-       (the      (UI / text /
+   substrate)  chained      fold)     API view)
+               trace)
+```
+
+VOLTAGE is below any JS runtime, so `DEEPEST_FORMULABLE = MACHINE`: absent a host
+substrate adapter, the hash-chained trace is as deep as this runtime can ground
+a claim. The Negotiator states that rather than pretending to reach the silicon.
+
+**Origin classification.** A request does not declare its rung honestly, so the
+true origin is inferred from the evidence it carries: cites a trace hash →
+MACHINE; reads projected fields → CODE; renders to a human → INTERFACE. With no
+evidence it is assumed to hold the *least* authority (INTERFACE), never ground
+truth.
+
+**Sufficiency** is mechanical — all four must hold, or the verdict is insufficient:
+
+1. **grounded** — every requested field derives down to the trace.
+2. **complete** — every requested field is resolvable (in the field registry).
+3. **non-fabricating** — no asserted value exceeds or contradicts what the trace
+   proves (e.g. asserting more `floor.gated` restrictions than were witnessed).
+4. **layer-honest** — the request does not declare a deeper (more authoritative)
+   rung than its evidence supports.
+
+On insufficiency the Negotiator never improvises a value (Twin-2 non-lie
+constraint). It returns the minimum `Requirement` that would make the request
+sufficient:
+
+| failure | requirement returned |
+| ------- | -------------------- |
+| asserted value drifts from the fold | `reconcile` — re-fold from the trace |
+| over-claims proven restrictions | `probe` — run a floor probe to witness them |
+| field not in the registry | `unknown-field` |
+| physical (VOLTAGE) claim | `substrate-adapter` — needs a host/hardware source |
+
+A sufficient verdict carries the grounded `representation`, the `derivation`
+(the rung path from MACHINE up to the formulated rung), and a `checksum`. See
+`test/negotiator.test.ts` for each path and `npm run demo` for a live run.
+
+### Still open on the Negotiator
+
+- The field registry (`FIELD_REGISTRY` in `layers.ts`) is the current vocabulary
+  of formulable fields; extend it as the representation grows.
+- "Sufficient" currently means the four criteria above. If a request should also
+  carry a *freshness* or *quorum* requirement (e.g. ρ must be backed by a probe
+  within N events), that is a clean extension point.
+
 ## Open design questions (to turn Design-level items into code)
 
 1. **Host adapter target.** For the real "Initiator" substrate, what is the
    intended target — a Linux host agent reading `perf`/MSRs/hwmon, a hypervisor
    module, or an emulator (QEMU) we instrument? This decides the `EventSource`
    adapter's language and shape.
-2. **Negotiator scope.** Should the Negotiator (a) stay a reconciliation gate,
-   or (b) grow into a layer-classifier that tags each request with its origin
-   rung and negotiates the minimal sufficient representation across rungs? (b)
-   is a real, interesting build; it needs a definition of "sufficient".
+2. **Negotiator scope.** ~~Should the Negotiator grow into a layer-classifier?~~
+   **Done** — see "The Negotiator" above. Remaining: extend the field registry
+   and decide whether sufficiency should also require probe freshness/quorum.
 3. **Twins/Mayor/Governor as software.** Want me to implement these now as a
    pure-software verification pipeline over the existing core (parity gate →
    trace-only witness → circuit breaker on `ok === false`), clearly labeled as

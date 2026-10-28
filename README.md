@@ -52,6 +52,18 @@ without ever reading the occluded value. ρ (`floor.gated`) is the count of such
 proven boundaries, and it folds into the checksum, so the restriction map is
 reconciled too.
 
+## The Negotiator
+
+A record is never simply handed out. `negotiator.ts` classifies which rung a
+request comes from (inferred from its evidence, since a layer does not reliably
+declare itself), formulates the asked-for fields down the stack
+(`VOLTAGE → MACHINE → CODE → INTERFACE`) toward the trace, and judges the result
+**sufficient** or **insufficient**. Sufficient requires all four of: *grounded*,
+*complete*, *non-fabricating*, and *layer-honest*. When insufficient it returns
+the minimum requirement to fix it — run a probe, re-reconcile, or supply a
+substrate adapter for a physical claim it cannot verify — rather than inventing a
+value. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#the-negotiator-implemented).
+
 ## Run it
 
 Requires Node ≥ 22.6 (for native TypeScript via `--experimental-strip-types`).
@@ -76,6 +88,8 @@ lib/integrity/
   persistence.ts   TraceStore seam (memory / localStorage) + flat load/save/clear
   source.ts        EventSource / FloorProbe seams (the substrate boundary)
   floor-probe.ts   the browser FloorProbe (reachable / absent / gated)
+  layers.ts        the rung stack (VOLTAGE→MACHINE→CODE→INTERFACE) + field registry
+  negotiator.ts    the Negotiator — classify a request's rung, formulate across the stack, judge sufficiency
   index.ts         public API barrel
 demo.ts            runnable end-to-end proof
 test/              node:test suite

@@ -11,6 +11,7 @@ import { project } from "./lib/integrity/projection.ts"
 import { reconcile } from "./lib/integrity/reconciler.ts"
 import { ingestInput, ingestWitnesses } from "./lib/integrity/trace.ts"
 import { restrictionCount, runFloorProbe } from "./lib/integrity/floor-probe.ts"
+import { negotiate } from "./lib/integrity/negotiator.ts"
 import type { RawEvent } from "./lib/integrity/types.ts"
 
 function line(label: string, value: string): void {
@@ -52,6 +53,40 @@ async function main(): Promise<void> {
   line("ok", String(dirty.ok))
   for (const d of dirty.diffs) {
     line(`drift: ${d.field}`, `live=${d.live} expected=${d.expected}${d.note ? `  (${d.note})` : ""}`)
+  }
+
+  console.log("\n== negotiator: formulate across the stack ==")
+  const good = await negotiate(
+    { declaredRung: "INTERFACE", claims: [{ field: "summary" }], evidence: { rendersToHuman: true } },
+    log,
+  )
+  if (good.sufficient) {
+    line("summary request", "SUFFICIENT")
+    line("  derivation", good.derivation.join(" → "))
+    line("  grounded to", good.groundedTo)
+    line("  representation", good.representation.summary)
+  }
+
+  console.log("\n== negotiator: insufficient (over-claim) ==")
+  const bad = await negotiate(
+    { claims: [{ field: "floor.gated", asserted: String((rep.floor.gated || 0) + 5) }], evidence: { citesRepresentation: true } },
+    log,
+  )
+  if (!bad.sufficient) {
+    line("over-claim request", "INSUFFICIENT")
+    for (const r of bad.reasons) line("  reason", r)
+    for (const m of bad.missing) line(`  need: ${m.kind}`, m.detail)
+  }
+
+  console.log("\n== negotiator: insufficient (dishonest layer) ==")
+  const lie = await negotiate(
+    { declaredRung: "VOLTAGE", claims: [{ field: "summary" }], evidence: { rendersToHuman: true } },
+    log,
+  )
+  if (!lie.sufficient) {
+    line("claims VOLTAGE authority", "INSUFFICIENT")
+    for (const r of lie.reasons) line("  reason", r)
+    for (const m of lie.missing) line(`  need: ${m.kind}`, m.detail)
   }
   console.log("")
 }

@@ -34,3 +34,14 @@ export {
 } from "./persistence.ts"
 export { type EventSource, type FloorProbe, type RawInput } from "./source.ts"
 export { browserFloorProbe, restrictionCount, runFloorProbe } from "./floor-probe.ts"
+export { DEEPEST_FORMULABLE, FIELD_REGISTRY, type Rung, RUNGS, isDeeper, rungIndex } from "./layers.ts"
+export {
+  type Claim,
+  type InsufficientVerdict,
+  type NegotiationRequest,
+  type NegotiationVerdict,
+  type RequestEvidence,
+  type Requirement,
+  type SufficientVerdict,
+  negotiate,
+} from "./negotiator.ts"
