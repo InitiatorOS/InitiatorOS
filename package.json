@@ -1,0 +1,16 @@
+{
+  "name": "initiator-os",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Substrate-agnostic integrity core: a tamper-evident trace, a deterministic projection, and a divergence reconciler.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "demo": "node --experimental-strip-types demo.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
