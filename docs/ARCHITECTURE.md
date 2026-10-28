@@ -38,18 +38,56 @@ way:
 voltage edge itself) is below any JavaScript runtime and is Design-level here —
 it requires a host/hardware adapter (see "Initiator", below).
 
+## The OS lifecycle (boot → kernel → runtime)
+
+This is an operating system, not a library with a gate bolted on. Its spine is
+the lifecycle named at the outset — **bootloader → kernel → runtime hashed
+events** — and `Kernel` (`lib/kernel/kernel.ts`) wires it together. The pasted
+floor-probe script is one subsystem of this whole (the runtime rung); the rest
+below is equally part of the OS and is implemented as an in-runtime software
+model, with only the silicon substrate left to a host adapter.
+
+```
+  BOOT                 KERNEL (supervise every transition)        RUNTIME
+  Initiator            Twins ──► Mayor ──► Governor               hashed-event trace
+  (boot/initiator)     (parity)  (witness) (breaker)              + projection + Negotiator
+   • load + attest        │         │          │                 + floor probe
+     the chain            │         │          └─ lockdown ──► queries refused
+   • map the floor        │         └─ reads trace facts only       until reset
+   • seal the head        └─ O₁ (claimed) = O₂ (trace-derived)
+                                    │
+                           State Transition Door  ── Central AI sees a metadata
+                           (central/door)             DoorView only, never the trace
+```
+
+- **Boot** (`boot/initiator.ts`): load the persisted trace, re-verify (attest)
+  its chain, map the floor once, seal the head. A broken prior chain cannot be
+  sealed → the kernel boots straight into lockdown.
+- **Kernel** (`kernel/*`): every `step(input)` / `probeFloor()` appends to the
+  trace and then runs **Twins → Mayor → Governor**. Twin parity is the honest
+  fold check; the Mayor halts on any trace/parity discrepancy reading only trace
+  facts; the Governor is the sticky breaker that locks the system down.
+- **Door** (`central/door.ts`): the Central AI observes a metadata-only
+  `DoorView` — opaque head handle plus scalars — and never holds the trace.
+- **Runtime**: while nominal, the kernel answers `query(request)` through the
+  Negotiator; in lockdown it refuses every query until `resetGovernor()`.
+
+Run `npm run os` for the whole lifecycle end to end (boot, four supervised
+steps, a query, injected drift tripping the breaker, lockdown, reset).
+
 ## Named components
 
 | Component | Framework role | Where / status |
 | --------- | -------------- | -------------- |
 | **Reconciler** | Algorithmic state-comparison engine | `reconciler.ts` — **Implemented**. Re-folds the trace, diffs every field (including ρ), re-verifies the chain. |
 | **Initiator** (as a data structure) | Immutable append-only ledger of state transitions | `event-log.ts` + `hash.ts` — **Implemented**. Tamper-evident hash chain; `verifyChain` pinpoints any break. |
-| **Initiator** (as "Ring -1 / VMX-root substrate") | Bare-metal capture of memory, registers, interrupts | **Design-level.** Not reachable from a JS runtime. Belongs to a host/hypervisor adapter behind the `EventSource` seam, written in C/Rust/asm — a separate project, not this module. |
+| **Initiator** (as boot/attestation) | Seal the root, attest at startup | `boot/initiator.ts` — **Implemented** (software model). Loads the trace, re-verifies the chain (a broken prior chain cannot be sealed), maps the floor once at startup. The software analog of measured boot. |
+| **Initiator** (as "Ring -1 / VMX-root substrate") | Bare-metal capture of memory, registers, interrupts | **Design-level.** Not reachable from a JS runtime. Belongs to a host/hypervisor adapter behind the `EventSource` seam, written in C/Rust/asm — a separate project, not this module. A real hardware root of trust is what makes boot attestation un-spoofable. |
 | **Negotiator** | Super-compiler / representation gate: asks *which layer* a request comes from and whether the representation along the stack is sufficient | **Implemented** (`negotiator.ts` + `layers.ts`). Classifies a request's origin rung from its evidence, formulates the asked-for fields down to the trace, and returns either a sufficient representation or the minimum requirement to make it so. Sufficiency is defined mechanically — see "The Negotiator" below. |
-| **Twins** (parity O₁ = O₂) | Dual backend actors; block unless outputs are identical | **Design-level** (software-modelable). A parity gate over two `Representation`-producing engines is implementable honestly as a pure comparison; it is not built yet. |
-| **Mayor** | Silicon-only witness; compares Twins' output to raw telemetry | **Design-level.** Depends on a real telemetry source (the hardware adapter). Modelable as a witness that only reads the trace, never the representation. |
-| **Governor** | Dual-visibility circuit breaker; lockdown | **Design-level.** A breaker over `ReconcileReport` (trip on `ok === false`) is implementable; the hardware-telemetry half needs the adapter. |
-| **Central AI / State Transition Door** | Apex reasoning behind the gate; "synthetic intuition" = adapts weights only from its own telemetry, no raw-data access | **Design-level, with an open question.** The *boundary* (a component that sees only metadata/`ReconcileReport`, never the raw trace) is implementable and useful. The specific "adapts its own weights purely from telemetry it cannot directly read" mechanism is not something this core can implement truthfully; it needs to be pinned to a concrete learning procedure before it is code. |
+| **Twins** (parity O₁ = O₂) | Dual backend actors; block unless outputs are identical | `kernel/twins.ts` — **Implemented** (software model). Twin-1 takes the claimed representation, Twin-2 recomputes strictly from the trace; parity is exactly the reconciler's two sides. |
+| **Mayor** | Silicon-only witness; compares Twins' output to raw telemetry | `kernel/mayor.ts` — **Implemented** (software model). Reads only trace facts (the hash chain) + the Twins' parity signal, never the representation; halts on any discrepancy. In a host build its telemetry source is the hardware adapter. |
+| **Governor** | Dual-visibility circuit breaker; lockdown | `kernel/governor.ts` — **Implemented** (software model). Sticky breaker: trips on a Mayor halt and stays in lockdown until explicitly reset. The kernel refuses Negotiator queries while tripped. |
+| **Central AI / State Transition Door** | Apex reasoning behind the gate; "synthetic intuition" = adapts weights only from its own telemetry, no raw-data access | **Boundary implemented; learning rule still open.** `central/door.ts` receives only a metadata `DoorView` (opaque head handle + scalars), never the trace or representation — the isolation boundary is real. The "adapts its own weights purely from telemetry it cannot directly read" mechanism is deliberately **not** implemented: it needs a concrete training signal and channel before it is code (see the caution below). |
 | **Floor probe** | Reachable / absent / gated classification | `floor-probe.ts` — **Implemented** (browser adapter). ISF_001 boundary classification at the capability level. |
 
 ## ISF nodes
@@ -80,12 +118,13 @@ as written they don't hold:
    voltage alone is un-spoofable.
 
 2. **"Synthetic intuition" — an AI that adapts its weights only from telemetry
-   it cannot directly read.** The *isolation boundary* is real and buildable
-   (let the reasoning layer see only `ReconcileReport`-style metadata). The
-   "adapts weights without access to the signal driving the adaptation" part is
-   self-contradictory as stated and needs a concrete mechanism (what is the
-   training signal, and through what channel) before it can be implemented
-   without hand-waving.
+   it cannot directly read.** The *isolation boundary* is now built
+   (`central/door.ts`: the reasoning layer sees only a metadata `DoorView`,
+   never the trace). The "adapts weights without access to the signal driving
+   the adaptation" part is still self-contradictory as stated and needs a
+   concrete mechanism (what is the training signal, and through what channel)
+   before it can be implemented without hand-waving. The boundary ships; the
+   learning rule does not.
 
 Neither caution blocks the core above — the trace, projection, reconciler, and
 floor probe stand on their own and are fully implemented and tested.
@@ -156,7 +195,8 @@ A sufficient verdict carries the grounded `representation`, the `derivation`
 2. **Negotiator scope.** ~~Should the Negotiator grow into a layer-classifier?~~
    **Done** — see "The Negotiator" above. Remaining: extend the field registry
    and decide whether sufficiency should also require probe freshness/quorum.
-3. **Twins/Mayor/Governor as software.** Want me to implement these now as a
-   pure-software verification pipeline over the existing core (parity gate →
-   trace-only witness → circuit breaker on `ok === false`), clearly labeled as
-   the software model, separate from any future hardware witness?
+3. **Twins/Mayor/Governor as software.** ~~Implement the supervisory pipeline?~~
+   **Done** — see "The OS lifecycle" above (`kernel/*`, `boot/*`, `central/*`),
+   clearly labeled as the software model and separate from any future hardware
+   witness. Remaining: the Central AI learning rule (caution 2) and the host
+   substrate adapter (question 1) are the two genuinely open pieces.

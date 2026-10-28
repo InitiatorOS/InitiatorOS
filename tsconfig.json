@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["lib", "test", "demo.ts"]
+  "include": ["lib", "test", "demo.ts", "os-demo.ts"]
 }
