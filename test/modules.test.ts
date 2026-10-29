@@ -4,13 +4,13 @@ import assert from "node:assert/strict"
 import { Slot } from "../lib/modules/slot.ts"
 import { ModuleBus, createOsBus } from "../lib/modules/bus.ts"
 import { type Actor, isActor, neuronetActor } from "../lib/modules/actor.ts"
-import { Kernel } from "../lib/kernel/kernel.ts"
+import { Initiator } from "../lib/initiator/initiator.ts"
 import { memoryStore } from "../lib/integrity/persistence.ts"
 import { negotiate } from "../lib/integrity/negotiator.ts"
 import { ingestInput } from "../lib/integrity/trace.ts"
 import type { RawEvent } from "../lib/integrity/types.ts"
 
-const quietBoot = () => Kernel.boot({ store: memoryStore(), probe: null })
+const quietBoot = () => Initiator.boot({ store: memoryStore(), probe: null })
 
 test("an unbound slot is a defined hole, not a crash", () => {
   const slot = new Slot<Actor>({ name: "actor.central", rung: "INTERFACE", provides: ["invoke"], purpose: "apex" })
@@ -83,13 +83,13 @@ test("binding a Central actor at runtime changes behavior; unbinding restores th
   const kernel = await quietBoot()
   const central: Actor = { id: "central-1", kind: "central", invoke: async (view) => ({ observed: view }) }
 
-  assert.equal(kernel.bindActor("actor.central", central), true)
+  assert.equal(await kernel.bindActor("actor.central", central), true)
   const r = await kernel.step({ type: "key", data: { code: 1 } })
   assert.ok(r.central)
   assert.equal(r.central.id, "central-1")
   assert.equal(r.requirements.length, 3)
 
-  kernel.unbind("actor.central")
+  await kernel.unbind("actor.central")
   const r2 = await kernel.step({ type: "key", data: { code: 2 } })
   assert.equal(r2.central, null)
   assert.equal(r2.requirements.length, 4)

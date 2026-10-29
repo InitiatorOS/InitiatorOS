@@ -42,39 +42,50 @@ it requires a host/hardware adapter (see "Initiator", below).
 
 This is an operating system, not a library with a gate bolted on. Its spine is
 the lifecycle named at the outset — **bootloader → kernel → runtime hashed
-events** — and `Kernel` (`lib/kernel/kernel.ts`) wires it together. The pasted
-floor-probe script is one subsystem of this whole (the runtime rung); the rest
-below is equally part of the OS and is implemented as an in-runtime software
-model, with only the silicon substrate left to a host adapter.
+events** — and the **Initiator is both bootloader and kernel in one root**
+(`lib/initiator/initiator.ts`). There is no boot step that hands off to a
+separate kernel, and no middleman between the root of trust and the interface.
+The pasted floor-probe script is one subsystem of this whole (the runtime rung).
 
 ```
-  BOOT                 KERNEL (supervise every transition)        RUNTIME
-  Initiator            Twins ──► Mayor ──► Governor               hashed-event trace
-  (boot/initiator)     (parity)  (witness) (breaker)              + projection + Negotiator
-   • load + attest        │         │          │                 + floor probe
-     the chain            │         │          └─ lockdown ──► queries refused
-   • map the floor        │         └─ reads trace facts only       until reset
-   • seal the head        └─ O₁ (claimed) = O₂ (trace-derived)
-                                    │
-                           State Transition Door  ── Central AI sees a metadata
-                           (central/door)             DoorView only, never the trace
+  INITIATOR (bootloader + kernel — one root)                      RUNTIME
+  boot ─► supervise every transition                              hashed-event trace
+  Twins ──► Mayor ──► Governor                                    + projection + Negotiator
+  (parity)  (witness) (breaker)                                   + floor probe
+     │         │          │
+     │         │          └─ lockdown ──► queries refused until reset
+     │         └─ reads trace facts only
+     └─ O₁ (claimed) = O₂ (trace-derived)
+                    │
+           State Transition Door ── Central AI sees a metadata DoorView only
+                                     never the trace
+   every function above routes through ONE audited dispatch:
+   logged + clocked (monotonic tick + timing) + hash-chained  →  zero-trust audit
 ```
 
-- **Boot** (`boot/initiator.ts`): load the persisted trace, re-verify (attest)
-  its chain, map the floor once, seal the head. A broken prior chain cannot be
-  sealed → the kernel boots straight into lockdown.
-- **Kernel** (`kernel/*`): every `step(input)` / `probeFloor()` appends to the
-  trace and then runs **Twins → Mayor → Governor**. Twin parity is the honest
-  fold check; the Mayor halts on any trace/parity discrepancy reading only trace
-  facts; the Governor is the sticky breaker that locks the system down.
-- **Door** (`central/door.ts`): the Central AI observes a metadata-only
+- **Boot** (`lib/initiator/boot.ts`, run by the Initiator): load the persisted
+  trace, re-verify (attest) its chain, map the floor once, seal the head. A
+  broken prior chain cannot be sealed → the Initiator boots straight into
+  lockdown. Boot is itself the first logged, clocked function (tick 1).
+- **Kernel = the same Initiator**: every `step(input)` / `probeFloor()` appends
+  to the trace and runs **Twins → Mayor → Governor** (organs in `lib/kernel/*`).
+  Twin parity is the honest-fold check; the Mayor halts on any trace/parity
+  discrepancy reading only trace facts; the Governor is the sticky breaker.
+- **Door** (`lib/central/door.ts`): the Central AI observes a metadata-only
   `DoorView` — opaque head handle plus scalars — and never holds the trace.
-- **Runtime**: while nominal, the kernel answers `query(request)` through the
+- **Audit** (`lib/initiator/audit.ts`): the Initiator is the sole entry point,
+  and every state-affecting operation is routed through one `audited` dispatch
+  that logs it with a monotonic clock tick, its timing, completion flag, and a
+  post-state digest, hash-chained. `verifyAudit()` checks the chain *and* that
+  the ticks are gap-free — a missing tick would mean an operation bypassed the
+  audit, which the single dispatch path makes impossible. That is the "no
+  middleman" guarantee behind a safe zero-trust audit.
+- **Runtime**: while nominal, the Initiator answers `query(request)` through the
   Negotiator; in lockdown it refuses every query until `resetGovernor()`.
 
 Run `npm run os` for the whole lifecycle end to end (boot, four supervised
-steps, a query, injected drift tripping the breaker, lockdown, reset) and the
-self-building section below.
+steps, a query, injected drift tripping the breaker, lockdown, reset), the
+self-building section, and the clocked audit log.
 
 ## Self-building: slots, modules, and the base language
 
@@ -126,7 +137,7 @@ representations can be compared and sorted.
 | --------- | -------------- | -------------- |
 | **Reconciler** | Algorithmic state-comparison engine | `reconciler.ts` — **Implemented**. Re-folds the trace, diffs every field (including ρ), re-verifies the chain. |
 | **Initiator** (as a data structure) | Immutable append-only ledger of state transitions | `event-log.ts` + `hash.ts` — **Implemented**. Tamper-evident hash chain; `verifyChain` pinpoints any break. |
-| **Initiator** (as boot/attestation) | Seal the root, attest at startup | `boot/initiator.ts` — **Implemented** (software model). Loads the trace, re-verifies the chain (a broken prior chain cannot be sealed), maps the floor once at startup. The software analog of measured boot. |
+| **Initiator** (bootloader + kernel, one root) | Boot/attest AND supervise — no middleman between root of trust and interface; every function logged + clocked | `lib/initiator/initiator.ts` + `boot.ts` + `audit.ts` — **Implemented** (software model). Boots (loads, attests the chain, maps the floor, seals the head — a broken chain locks down), then runs as the kernel. Every operation routes through one audited dispatch: monotonic clock tick + timing + post-state digest, hash-chained; `verifyAudit()` is gap-proof. The software analog of measured boot + a zero-trust operation log. |
 | **Initiator** (as "Ring -1 / VMX-root substrate") | Bare-metal capture of memory, registers, interrupts | **Design-level.** Not reachable from a JS runtime. Belongs to a host/hypervisor adapter behind the `EventSource` seam, written in C/Rust/asm — a separate project, not this module. A real hardware root of trust is what makes boot attestation un-spoofable. |
 | **Negotiator** | Super-compiler / representation gate: asks *which layer* a request comes from and whether the representation along the stack is sufficient | **Implemented** (`negotiator.ts` + `layers.ts`). Classifies a request's origin rung from its evidence, formulates the asked-for fields down to the trace, and returns either a sufficient representation or the minimum requirement to make it so. Sufficiency is defined mechanically — see "The Negotiator" below. |
 | **Twins** (parity O₁ = O₂) | Dual backend actors; block unless outputs are identical | `kernel/twins.ts` — **Implemented** (software model). Twin-1 takes the claimed representation, Twin-2 recomputes strictly from the trace; parity is exactly the reconciler's two sides. |

@@ -1,19 +1,19 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { Kernel } from "../lib/kernel/kernel.ts"
+import { Initiator } from "../lib/initiator/initiator.ts"
 import { twins } from "../lib/kernel/twins.ts"
 import { mayor } from "../lib/kernel/mayor.ts"
 import { Governor } from "../lib/kernel/governor.ts"
 import { observe } from "../lib/central/door.ts"
-import { boot } from "../lib/boot/initiator.ts"
+import { boot } from "../lib/initiator/boot.ts"
 import { memoryStore } from "../lib/integrity/persistence.ts"
 import { ingestInput } from "../lib/integrity/trace.ts"
 import { project } from "../lib/integrity/projection.ts"
 import type { RawEvent } from "../lib/integrity/types.ts"
 
 /** Boot with no startup probe so logs stay deterministic. */
-const quietBoot = () => Kernel.boot({ store: memoryStore(), probe: null })
+const quietBoot = () => Initiator.boot({ store: memoryStore(), probe: null })
 
 test("boot on an empty store seals a valid (empty) chain", async () => {
   const { report } = await boot({ store: memoryStore(), probe: null })
@@ -33,7 +33,7 @@ test("boot attestation fails on a tampered prior chain and the kernel locks down
   assert.equal(report.chainValid, false)
   assert.equal(report.sealed, false)
 
-  const kernel = await Kernel.boot({ store: memoryStore(tampered), probe: null })
+  const kernel = await Initiator.boot({ store: memoryStore(tampered), probe: null })
   assert.equal(kernel.state.governor, "lockdown")
   const q = await kernel.query({ claims: [{ field: "eventCount" }], evidence: { citesTraceHash: "x" } })
   assert.equal(q.sufficient, false)
@@ -67,7 +67,7 @@ test("a lying upper layer trips the Governor, seals the door, and blocks queries
   assert.equal(locked.sufficient, false)
   assert.ok("locked" in locked && locked.locked)
 
-  kernel.resetGovernor()
+  await kernel.resetGovernor()
   assert.equal(kernel.state.governor, "nominal")
   const after = await kernel.query({ claims: [{ field: "keyPresses" }], evidence: { citesRepresentation: true } })
   if (!after.sufficient) throw new Error("expected sufficient after reset")

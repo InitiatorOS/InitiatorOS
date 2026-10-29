@@ -2,20 +2,26 @@
 
 A zero-trust operating system where the representation a user sees must always
 answer to an immutable record of what actually happened. Its spine is the
-lifecycle **boot → kernel → runtime hashed events**:
+lifecycle **boot → kernel → runtime hashed events**, and the **Initiator is both
+bootloader and kernel** — one root, no middleman between the root of trust and
+the interface:
 
 ```
-  BOOT                 KERNEL                              RUNTIME
-  Initiator        →   Twins → Mayor → Governor        →  hashed-event trace
-  (attest, seal)       (parity)(witness)(breaker)          + projection
-                            └── supervise every ──┘         + Negotiator
-                                 transition                 + floor probe
+  INITIATOR (bootloader + kernel, one root)            RUNTIME
+  boot → Twins → Mayor → Governor                  →   hashed-event trace
+  (attest) (parity)(witness)(breaker)                  + projection + Negotiator
+            └── supervise every transition ──┘          + floor probe
+
+  every function routes through ONE audited dispatch:
+  logged + clocked (tick + timing) + hash-chained  →   zero-trust audit
 ```
 
-Boot attests the trace and seals the root; the kernel runs every state
-transition through a self-auditing supervisory hierarchy; the runtime is the
-tamper-evident event trace and the gates that read it. A proven discrepancy
-anywhere trips the Governor and locks the system down until reset.
+The Initiator boots itself (attest + seal), then runs as the kernel: every
+transition goes through the self-auditing Twins/Mayor/Governor hierarchy, and a
+proven discrepancy anywhere trips the Governor and locks the system down until
+reset. Because the Initiator is the sole entry point, **every OS function is
+logged and clocked** in a tamper-evident audit — nothing reaches the interface
+unlogged, which is what makes the zero-trust audit safe.
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#the-os-lifecycle-boot--kernel--runtime)
 for the whole map, and `npm run os` for the lifecycle end to end.
 
@@ -110,7 +116,7 @@ npm install        # dev deps: typescript, @types/node
 npm run typecheck  # tsc --noEmit
 npm test           # node --test over the suite
 npm run demo       # runtime only: trace + real floor probe, reconcile clean, then catch injected drift
-npm run os         # whole OS: boot → supervised steps → query → drift trips the breaker → reset
+npm run os         # whole OS: boot → supervised steps → query → drift trips the breaker → reset → clocked audit
 ```
 
 ## Layout
@@ -134,19 +140,20 @@ lib/modules/
   slot.ts          the self-building primitive — a typed hole that reports its own contract
   actor.ts         replaceable AI modules (3 distinct roles) + neuronet-as-tool seam
   bus.ts           the module bus — declare/bind/unbind slots, report requirements
-lib/boot/
-  initiator.ts     BOOT — load + attest the chain, map the floor, seal the head
-lib/kernel/
+lib/initiator/      THE INITIATOR — both bootloader and kernel, one root
+  boot.ts          boot/attest — load + verify the chain, map the floor, seal the head
+  initiator.ts     the Initiator — boot + supervise every transition + gated queries, all audited
+  audit.ts         the clocked, hash-chained log of every OS function (zero-trust audit)
+lib/kernel/         the Initiator's supervisory organs
   twins.ts         Twins — parity O₁=O₂ (claimed vs. trace-derived representation)
   mayor.ts         Mayor — trace-only witness; halts on any discrepancy
   governor.ts      Governor — sticky circuit breaker (lockdown until reset)
-  kernel.ts        Kernel — boot + supervise every transition + gated queries
 lib/central/
   door.ts          State Transition Door — Central AI sees metadata only
 lib/os.ts          whole-OS public API barrel
 demo.ts            runtime proof (trace + reconcile + negotiator)
 os-demo.ts         whole-OS lifecycle proof
-test/              node:test suite (integrity + negotiator + kernel)
+test/              node:test suite (integrity + negotiator + kernel + modules + audit)
 docs/ARCHITECTURE.md   honest map of the full framework vs. what is implemented here
 ```
 

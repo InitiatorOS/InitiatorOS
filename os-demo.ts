@@ -3,11 +3,12 @@
  *
  *   node --experimental-strip-types os-demo.ts
  *
- * boot (Initiator attestation + floor map) → step transitions through the
- * Twins/Mayor/Governor kernel → query through the Negotiator → inject drift and
- * watch the Governor trip, seal the Door, and refuse queries until reset.
+ * The Initiator is both bootloader and kernel: it boots (attest + floor map),
+ * supervises every transition through Twins/Mayor/Governor, answers Negotiator
+ * queries, and routes every function through one clocked, hash-chained audit.
+ * Drift trips the Governor; the audit log at the end is the zero-trust record.
  */
-import { Kernel } from "./lib/kernel/kernel.ts"
+import { Initiator } from "./lib/initiator/initiator.ts"
 import { project } from "./lib/integrity/projection.ts"
 import { neuronetActor } from "./lib/modules/actor.ts"
 import type { RawInput } from "./lib/integrity/source.ts"
@@ -17,8 +18,8 @@ function line(label: string, value: string): void {
 }
 
 async function main(): Promise<void> {
-  console.log("\n== BOOT: Initiator ==")
-  const kernel = await Kernel.boot() // default: real floor probe at startup
+  console.log("\n== BOOT: Initiator (bootloader + kernel) ==")
+  const kernel = await Initiator.boot() // default: real floor probe at startup
   const b = kernel.bootReport
   line("chain valid / sealed", `${b.chainValid} / ${b.sealed}`)
   line("head", b.head.slice(0, 16) + "…")
@@ -56,7 +57,7 @@ async function main(): Promise<void> {
   if (!locked.sufficient && "locked" in locked) line("refused", locked.reasons[0])
 
   console.log("\n== RESET + RE-QUERY ==")
-  kernel.resetGovernor()
+  await kernel.resetGovernor()
   const after = await kernel.query({ claims: [{ field: "eventCount" }], evidence: { citesTraceHash: "x" } })
   line("governor", kernel.state.governor)
   if (after.sufficient) line("eventCount", after.representation.eventCount)
@@ -66,7 +67,7 @@ async function main(): Promise<void> {
 
   console.log("\n== SELF-MODIFY: bind a neuronet as the Central AI ==")
   const net = { skill: "door-watch", evaluate: (view: unknown) => ({ note: "neuronet observed metadata", view }) }
-  kernel.bindActor("actor.central", neuronetActor("central-net", "central", net))
+  await kernel.bindActor("actor.central", neuronetActor("central-net", "central", net))
   const stepped = await kernel.step({ type: "pointer", data: { x: 1, y: 1 } })
   line("central now", stepped.central ? `bound (${stepped.central.id})` : "unbound")
   line("remaining holes", String(stepped.requirements.length))
@@ -79,6 +80,14 @@ async function main(): Promise<void> {
   if (q2.sufficient) {
     line("base signature", q2.base.signature.slice(0, 16) + "…")
     for (const t of q2.base.terms) line(`  ${t.rung}`, `${t.field} : ${t.type}`)
+  }
+
+  console.log("\n== AUDIT: every function, logged and clocked ==")
+  const audited = await kernel.verifyAudit()
+  line("clock (functions run)", String(kernel.clock()))
+  line("audit chain valid", String(audited.valid))
+  for (const rec of kernel.auditLog()) {
+    line(`tick ${rec.tick}: ${rec.fn}`, `${rec.durationMs}ms  ok=${rec.ok}  digest=${rec.digest.slice(0, 12)}…`)
   }
   console.log("")
 }
