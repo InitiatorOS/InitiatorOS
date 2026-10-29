@@ -45,3 +45,4 @@ export {
   type SufficientVerdict,
   negotiate,
 } from "./negotiator.ts"
+export { type BaseForm, type BaseTerm, normalize } from "./normalize.ts"

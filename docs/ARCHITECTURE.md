@@ -73,7 +73,52 @@ model, with only the silicon substrate left to a host adapter.
   Negotiator; in lockdown it refuses every query until `resetGovernor()`.
 
 Run `npm run os` for the whole lifecycle end to end (boot, four supervised
-steps, a query, injected drift tripping the breaker, lockdown, reset).
+steps, a query, injected drift tripping the breaker, lockdown, reset) and the
+self-building section below.
+
+## Self-building: slots, modules, and the base language
+
+The framework works because it builds itself. When the system meets a piece that
+is not yet defined, it does not ignore it and it does not fake it. It declares
+the piece as a **variable the whole 3-stack knows is supposed to be there**, with
+the functions it must provide — and keeps running around the hole.
+
+**Slots** (`modules/slot.ts`). A `Slot` is a typed hole. It is either bound to a
+module or an explicitly *defined undefined-variable*: resolving it never throws,
+it reports its own `Contract` (name, rung, the functions required, its purpose).
+A roadblock becomes a variable with a known shape, not a crash. This is the same
+move the Negotiator makes at the query level (`missing: Requirement[]`), now a
+first-class runtime mechanism — the architecture's "design-level" pieces are
+literally these unbound slots.
+
+**The module bus** (`modules/bus.ts`). `createOsBus()` pre-declares the standard
+slots, all unbound:
+
+| slot | rung | role |
+| ---- | ---- | ---- |
+| `actor.prediction` | CODE | Twin-1 enhancement (optional) |
+| `actor.truth-bound` | CODE | Twin-2 reasoning (optional) |
+| `actor.central` | INTERFACE | Central AI apex (optional) |
+| `substrate.silicon` | VOLTAGE | host EventSource + FloorProbe (the only way to ground below MACHINE) |
+
+`kernel.requirements()` returns the unbound ones live — the system's own account
+of what it is missing and what each hole must provide. The kernel runs with
+every slot empty; it never bricks.
+
+**AI actors are hot-swappable modules** (`modules/actor.ts`). The three roles are
+distinct and replaceable. An `Actor` is bound into a slot at runtime
+(`kernel.bindActor`), rebound, or unbound — self-modification. Whatever an actor
+emits is still subject to the trace/reconciler/Mayor, so an actor cannot lie past
+the floor. A module may wrap a **`Neuronet`**: a skill-specialized model reached
+for like a hammer (the right tool for a task) instead of retraining a monolith.
+`neuronetActor()` is that seam; a real model plugs in behind it.
+
+**The base language** (`integrity/normalize.ts`). To sort across the rung
+dialects the Negotiator needs one canonical form to reason in. `normalize`
+compiles any set of fields into a de-tokenized, typed, rung-tagged `BaseForm`,
+sorted ground-truth-first, with a `signature`. Every sufficient verdict carries
+its `base` — the "different language" the Negotiator emits so disparate
+representations can be compared and sorted.
 
 ## Named components
 
@@ -87,7 +132,7 @@ steps, a query, injected drift tripping the breaker, lockdown, reset).
 | **Twins** (parity O₁ = O₂) | Dual backend actors; block unless outputs are identical | `kernel/twins.ts` — **Implemented** (software model). Twin-1 takes the claimed representation, Twin-2 recomputes strictly from the trace; parity is exactly the reconciler's two sides. |
 | **Mayor** | Silicon-only witness; compares Twins' output to raw telemetry | `kernel/mayor.ts` — **Implemented** (software model). Reads only trace facts (the hash chain) + the Twins' parity signal, never the representation; halts on any discrepancy. In a host build its telemetry source is the hardware adapter. |
 | **Governor** | Dual-visibility circuit breaker; lockdown | `kernel/governor.ts` — **Implemented** (software model). Sticky breaker: trips on a Mayor halt and stays in lockdown until explicitly reset. The kernel refuses Negotiator queries while tripped. |
-| **Central AI / State Transition Door** | Apex reasoning behind the gate; "synthetic intuition" = adapts weights only from its own telemetry, no raw-data access | **Boundary implemented; learning rule still open.** `central/door.ts` receives only a metadata `DoorView` (opaque head handle + scalars), never the trace or representation — the isolation boundary is real. The "adapts its own weights purely from telemetry it cannot directly read" mechanism is deliberately **not** implemented: it needs a concrete training signal and channel before it is code (see the caution below). |
+| **Central AI / State Transition Door** | Apex reasoning behind the gate; "synthetic intuition" = adapts weights only from its own telemetry, no raw-data access | **Boundary implemented; learning rule still open.** `central/door.ts` receives only a metadata `DoorView` (opaque head handle + scalars), never the trace or representation — the isolation boundary is real. The "adapts its own weights purely from telemetry it cannot directly read" mechanism is deliberately **not** implemented: it needs a concrete training signal and channel before it is code (see the caution below). The apex reasoning is an `actor.central` slot — bind any `Actor` (including a `neuronetActor` wrapping a specialized model) at runtime; unbound, the Door still runs. |
 | **Floor probe** | Reachable / absent / gated classification | `floor-probe.ts` — **Implemented** (browser adapter). ISF_001 boundary classification at the capability level. |
 
 ## ISF nodes
@@ -188,10 +233,12 @@ A sufficient verdict carries the grounded `representation`, the `derivation`
 
 ## Open design questions (to turn Design-level items into code)
 
-1. **Host adapter target.** For the real "Initiator" substrate, what is the
-   intended target — a Linux host agent reading `perf`/MSRs/hwmon, a hypervisor
-   module, or an emulator (QEMU) we instrument? This decides the `EventSource`
-   adapter's language and shape.
+1. **Host adapter target.** The `substrate.silicon` slot is now declared and
+   reported as a requirement (`provides: [start, run]`). What is the intended
+   target to fill it — a Linux host agent reading `perf`/MSRs/hwmon, a
+   hypervisor module, or an emulator (QEMU) we instrument? This decides the
+   `EventSource`/`FloorProbe` adapter's language and shape; binding it is what
+   lets a claim ground below MACHINE.
 2. **Negotiator scope.** ~~Should the Negotiator grow into a layer-classifier?~~
    **Done** — see "The Negotiator" above. Remaining: extend the field registry
    and decide whether sufficiency should also require probe freshness/quorum.

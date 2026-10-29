@@ -85,6 +85,22 @@ the minimum requirement to fix it — run a probe, re-reconcile, or supply a
 substrate adapter for a physical claim it cannot verify — rather than inventing a
 value. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#the-negotiator-implemented).
 
+Across rungs it reasons in one **base language** (`normalize.ts`): every
+sufficient answer carries a canonical, de-tokenized, rung-sorted `BaseForm` with
+a signature — the common form that makes the dialects sortable.
+
+## It builds itself
+
+When the system meets a piece that isn't defined yet, it neither ignores nor
+fakes it — it declares a **typed slot** the whole stack knows is supposed to be
+there, with the functions it must provide, and keeps running around the hole
+(`lib/modules/`). `kernel.requirements()` reports the unbound slots live — the
+system's own account of what it's missing. The AI roles (Twin-1 prediction,
+Twin-2 truth-bound, Central) are hot-swappable modules bound into those slots at
+runtime; a module can wrap a **neuronet** — a skill-specialized model reached for
+like a hammer instead of retraining a monolith. The kernel runs with every slot
+empty and never bricks; binding a module is how it modifies its own performance.
+
 ## Run it
 
 Requires Node ≥ 22.6 (for native TypeScript via `--experimental-strip-types`).
@@ -112,7 +128,12 @@ lib/integrity/
   floor-probe.ts   the browser FloorProbe (reachable / absent / gated)
   layers.ts        the rung stack (VOLTAGE→MACHINE→CODE→INTERFACE) + field registry
   negotiator.ts    the Negotiator — classify a request's rung, formulate across the stack, judge sufficiency
+  normalize.ts     the base language — compile fields into a canonical rung-sorted IR
   index.ts         integrity-core public API barrel
+lib/modules/
+  slot.ts          the self-building primitive — a typed hole that reports its own contract
+  actor.ts         replaceable AI modules (3 distinct roles) + neuronet-as-tool seam
+  bus.ts           the module bus — declare/bind/unbind slots, report requirements
 lib/boot/
   initiator.ts     BOOT — load + attest the chain, map the floor, seal the head
 lib/kernel/

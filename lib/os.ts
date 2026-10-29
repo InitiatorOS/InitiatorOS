@@ -17,3 +17,8 @@ export { twins, type TwinsResult } from "./kernel/twins.ts"
 export { mayor, type MayorVerdict } from "./kernel/mayor.ts"
 export { Governor, type GovernorDecision, type GovernorState } from "./kernel/governor.ts"
 export { observe, type DoorObservation, type DoorView } from "./central/door.ts"
+
+// The self-building module substrate: typed slots, replaceable AI actors, the bus.
+export { Slot, type Contract, type SlotRequirement, type SlotStatus } from "./modules/slot.ts"
+export { type Actor, type ActorKind, type Neuronet, isActor, neuronetActor } from "./modules/actor.ts"
+export { ModuleBus, createOsBus } from "./modules/bus.ts"

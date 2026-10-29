@@ -32,6 +32,7 @@ import {
   makeContext,
   rungIndex,
 } from "./layers.ts"
+import { type BaseForm, normalize } from "./normalize.ts"
 
 /** A field the request wants represented, optionally with a value it already asserts. */
 export interface Claim {
@@ -71,6 +72,8 @@ export interface SufficientVerdict {
   /** The rung path from ground truth up to the formulated rung. */
   derivation: Rung[]
   representation: Record<string, string>
+  /** The base-language form of the answer — the canonical IR the Negotiator sorts in. */
+  base: BaseForm
   checksum: string
 }
 
@@ -186,8 +189,9 @@ export async function negotiate(
   // reaches the deepest rung this runtime can verify.
   const groundedTo = DEEPEST_FORMULABLE
   const derivation = RUNGS_FROM(groundedTo, formulatedRung)
+  const base = await normalize(ctx, Object.keys(representation))
   const checksum = await sha256Hex(canonicalize(representation))
-  return { sufficient: true, originRung, formulatedRung, groundedTo, derivation, representation, checksum }
+  return { sufficient: true, originRung, formulatedRung, groundedTo, derivation, representation, base, checksum }
 }
 
 /** The inclusive rung path from `deep` up to `shallow`. */

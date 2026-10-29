@@ -22,12 +22,19 @@ import { twins, type TwinsResult } from "./twins.ts"
 import { mayor, type MayorVerdict } from "./mayor.ts"
 import { Governor, type GovernorDecision } from "./governor.ts"
 import { observe, type DoorObservation, type DoorView } from "../central/door.ts"
+import { ModuleBus, createOsBus } from "../modules/bus.ts"
+import type { Actor } from "../modules/actor.ts"
+import type { SlotRequirement, SlotStatus } from "../modules/slot.ts"
 
 export interface SupervisoryResult {
   twins: TwinsResult
   mayor: MayorVerdict
   governor: GovernorDecision
   door: DoorObservation
+  /** The Central AI module's observation, or null when its slot is unbound. */
+  central: { id: string; output: unknown } | null
+  /** The currently unbound slots — the self-defined roadblocks, reported live. */
+  requirements: SlotRequirement[]
 }
 
 export interface KernelState {
@@ -51,6 +58,7 @@ export class Kernel {
   private readonly store: TraceStore
   private readonly probe: FloorProbe | null
   private readonly governor: Governor
+  private readonly bus: ModuleBus
   readonly bootReport: BootReport
 
   private constructor(
@@ -58,16 +66,18 @@ export class Kernel {
     store: TraceStore,
     probe: FloorProbe | null,
     governor: Governor,
+    bus: ModuleBus,
     bootReport: BootReport,
   ) {
     this.log = log
     this.store = store
     this.probe = probe
     this.governor = governor
+    this.bus = bus
     this.bootReport = bootReport
   }
 
-  static async boot(opts: { store?: TraceStore; probe?: FloorProbe | null } = {}): Promise<Kernel> {
+  static async boot(opts: { store?: TraceStore; probe?: FloorProbe | null; bus?: ModuleBus } = {}): Promise<Kernel> {
     const probe = opts.probe === undefined ? browserFloorProbe : opts.probe
     const { report, log, store } = await boot({ store: opts.store, probe })
     const governor = new Governor()
@@ -75,7 +85,10 @@ export class Kernel {
     if (!report.sealed) {
       governor.evaluate({ halt: true, reason: "boot attestation failed: prior chain not sealed" })
     }
-    return new Kernel(log, store, probe, governor, report)
+    // Declare the standard slots (AI actors + silicon substrate), all unbound.
+    // The kernel runs with every one of them empty.
+    const bus = opts.bus ?? createOsBus()
+    return new Kernel(log, store, probe, governor, bus, report)
   }
 
   get state(): KernelState {
@@ -125,7 +138,11 @@ export class Kernel {
       governorState: g.state,
       rho: project(this.log).floor.gated,
     }
-    return { twins: t, mayor: m, governor: g, door: observe(view) }
+    // The Central AI is optional: if its slot is bound, it observes the
+    // metadata-only DoorView; if not, the system continues without it.
+    const centralActor = this.bus.getActor("actor.central")
+    const central = centralActor ? { id: centralActor.id, output: await centralActor.invoke(view) } : null
+    return { twins: t, mayor: m, governor: g, door: observe(view), central, requirements: this.bus.requirements() }
   }
 
   /** Query through the Negotiator — refused while the Governor is in lockdown. */
@@ -138,6 +155,26 @@ export class Kernel {
 
   resetGovernor(): void {
     this.governor.reset()
+  }
+
+  /** The unbound slots — what the system knows is supposed to be there but isn't yet. */
+  requirements(): SlotRequirement[] {
+    return this.bus.requirements()
+  }
+
+  /** The state of every declared slot (bound/unbound). */
+  modules(): SlotStatus[] {
+    return this.bus.status()
+  }
+
+  /** Bind an AI actor module into a slot at runtime (self-modification). */
+  bindActor(name: string, actor: Actor): boolean {
+    return this.bus.bindActor(name, actor)
+  }
+
+  /** Empty a slot, returning it to a defined hole. */
+  unbind(name: string): boolean {
+    return this.bus.unbind(name)
   }
 
   /** A read-only view of the trace (for a host front end / inspector). */

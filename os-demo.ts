@@ -9,6 +9,7 @@
  */
 import { Kernel } from "./lib/kernel/kernel.ts"
 import { project } from "./lib/integrity/projection.ts"
+import { neuronetActor } from "./lib/modules/actor.ts"
 import type { RawInput } from "./lib/integrity/source.ts"
 
 function line(label: string, value: string): void {
@@ -59,6 +60,26 @@ async function main(): Promise<void> {
   const after = await kernel.query({ claims: [{ field: "eventCount" }], evidence: { citesTraceHash: "x" } })
   line("governor", kernel.state.governor)
   if (after.sufficient) line("eventCount", after.representation.eventCount)
+
+  console.log("\n== MODULES: the system knows what is missing ==")
+  for (const req of kernel.requirements()) line(`unbound: ${req.name}`, `needs [${req.provides.join(", ")}]`)
+
+  console.log("\n== SELF-MODIFY: bind a neuronet as the Central AI ==")
+  const net = { skill: "door-watch", evaluate: (view: unknown) => ({ note: "neuronet observed metadata", view }) }
+  kernel.bindActor("actor.central", neuronetActor("central-net", "central", net))
+  const stepped = await kernel.step({ type: "pointer", data: { x: 1, y: 1 } })
+  line("central now", stepped.central ? `bound (${stepped.central.id})` : "unbound")
+  line("remaining holes", String(stepped.requirements.length))
+
+  console.log("\n== BASE LANGUAGE: the Negotiator's canonical IR ==")
+  const q2 = await kernel.query({
+    claims: [{ field: "summary" }, { field: "chainHead" }, { field: "eventCount" }],
+    evidence: { rendersToHuman: true },
+  })
+  if (q2.sufficient) {
+    line("base signature", q2.base.signature.slice(0, 16) + "…")
+    for (const t of q2.base.terms) line(`  ${t.rung}`, `${t.field} : ${t.type}`)
+  }
   console.log("")
 }
 
