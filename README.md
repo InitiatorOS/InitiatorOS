@@ -100,7 +100,7 @@ a signature — the common form that makes the dialects sortable.
 When the system meets a piece that isn't defined yet, it neither ignores nor
 fakes it — it declares a **typed slot** the whole stack knows is supposed to be
 there, with the functions it must provide, and keeps running around the hole
-(`lib/modules/`). `kernel.requirements()` reports the unbound slots live — the
+(`lib/modules/`). `initiator.requirements()` reports the unbound slots live — the
 system's own account of what it's missing. The AI roles (Twin-1 prediction,
 Twin-2 truth-bound, Central) are hot-swappable modules bound into those slots at
 runtime; a module can wrap a **neuronet** — a skill-specialized model reached for

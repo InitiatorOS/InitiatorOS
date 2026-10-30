@@ -112,15 +112,16 @@ slots, all unbound:
 | `actor.central` | INTERFACE | Central AI apex (optional) |
 | `substrate.silicon` | VOLTAGE | host EventSource + FloorProbe (the only way to ground below MACHINE) |
 
-`kernel.requirements()` returns the unbound ones live — the system's own account
+`initiator.requirements()` returns the unbound ones live — the system's own account
 of what it is missing and what each hole must provide. The kernel runs with
 every slot empty; it never bricks.
 
 **AI actors are hot-swappable modules** (`modules/actor.ts`). The three roles are
 distinct and replaceable. An `Actor` is bound into a slot at runtime
-(`kernel.bindActor`), rebound, or unbound — self-modification. Whatever an actor
-emits is still subject to the trace/reconciler/Mayor, so an actor cannot lie past
-the floor. A module may wrap a **`Neuronet`**: a skill-specialized model reached
+(`initiator.bindActor`), rebound, or unbound — self-modification. An actor's
+output is inert: attached to the result for observation, influencing no state,
+and not itself verified. It cannot corrupt the floor because nothing downstream
+consumes it as truth — but inert is not the same as verified. A module may wrap a **`Neuronet`**: a skill-specialized model reached
 for like a hammer (the right tool for a task) instead of retraining a monolith.
 `neuronetActor()` is that seam; a real model plugs in behind it.
 
@@ -241,6 +242,36 @@ A sufficient verdict carries the grounded `representation`, the `derivation`
 - "Sufficient" currently means the four criteria above. If a request should also
   carry a *freshness* or *quorum* requirement (e.g. ρ must be backed by a probe
   within N events), that is a clean extension point.
+
+## Verification ledger — proven vs. absent
+
+The framework applied to its own verification. Only what was executed and
+observed counts as proven; everything else is listed as *absent* — a defined
+hole, not a pass and not a failure.
+
+**Proven (observed in this environment):** `tsc --noEmit` clean · 39/39
+`node:test` · both demos exit 0 · audit ticks contiguous · audit tamper
+detection · concurrent `step()` calls serialized, with audit and trace in
+agreement. That last item was a real defect: before serialization, five
+concurrent steps logged five audit ticks while the trace kept one — four
+unlogged transitions, undetected because the chain stayed valid. It was
+reproduced, fixed in `Initiator.audited` (the sole dispatch now queues every
+operation), and guarded by a regression test.
+
+**Absent — exercised nowhere yet:**
+
+- The audit log is in-memory; it does not persist across restarts.
+- Boot is clocked as one tick; its sub-steps are not individually logged.
+- Pure reads (`state`, `requirements`, `modules`, `snapshot`, `clock`,
+  `auditLog`) are unaudited *by design* — ratify or reverse that choice.
+- No real `gated` witness has been observed: Node has nothing to gate, so only
+  synthetic gated witnesses have been tested. A sandboxed browser is where a
+  real one appears.
+- The browser `FloorProbe` adapter has never run in a browser here.
+- Actor output is inert, not verified.
+- The tests and the code share one author, so Twin-1 and Twin-2 are not yet
+  independent. An independent reviewer or a second implementation is what makes
+  parity meaningful.
 
 ## Open design questions (to turn Design-level items into code)
 

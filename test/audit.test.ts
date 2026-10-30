@@ -4,6 +4,7 @@ import assert from "node:assert/strict"
 import { AuditLog } from "../lib/initiator/audit.ts"
 import { Initiator } from "../lib/initiator/initiator.ts"
 import { memoryStore } from "../lib/integrity/persistence.ts"
+import { verifyChain } from "../lib/integrity/event-log.ts"
 
 const quietBoot = () => Initiator.boot({ store: memoryStore(), probe: null })
 
@@ -65,4 +66,37 @@ test("the audit survives a lockdown: a failed-parity supervise is still logged",
 
   const v = await kernel.verifyAudit()
   assert.equal(v.valid, true)
+})
+
+test("concurrent steps are serialized: no event is ever lost", async () => {
+  const kernel = await quietBoot()
+  // Fire five steps at once. Before serialization, four of these were silently
+  // dropped while the audit still claimed five ran — audit and trace disagreed.
+  await Promise.all([1, 2, 3, 4, 5].map((code) => kernel.step({ type: "key", data: { code } })))
+
+  const stepsAudited = kernel.auditLog().filter((r) => r.fn === "step").length
+  assert.equal(stepsAudited, 5)
+  assert.equal(kernel.snapshot().length, 5, "audit and trace must agree")
+  assert.deepEqual(kernel.snapshot().map((e) => e.seq), [0, 1, 2, 3, 4])
+  assert.deepEqual(kernel.snapshot().map((e) => e.data.code), [1, 2, 3, 4, 5]) // arrival order preserved
+
+  assert.equal((await verifyChain(kernel.snapshot())).valid, true)
+  assert.equal((await kernel.verifyAudit()).valid, true)
+})
+
+test("every audit record is clocked with a finite, non-negative duration", async () => {
+  const kernel = await quietBoot()
+  await kernel.step({ type: "key", data: { code: 1 } })
+  for (const r of kernel.auditLog()) {
+    assert.ok(Number.isFinite(r.durationMs) && r.durationMs >= 0, `tick ${r.tick} has bad duration ${r.durationMs}`)
+  }
+})
+
+test("the audit digest fingerprints module changes, not just the trace", async () => {
+  const kernel = await quietBoot()
+  await kernel.step({ type: "key", data: { code: 1 } })
+  const before = kernel.auditLog().at(-1)!.digest
+  await kernel.bindActor("actor.central", { id: "c", kind: "central", invoke: async () => 1 })
+  const after = kernel.auditLog().at(-1)!.digest
+  assert.notEqual(before, after, "binding a module must change the post-state digest")
 })

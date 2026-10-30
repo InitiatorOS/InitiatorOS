@@ -5,8 +5,11 @@
  * must never brick because an actor is absent — an empty actor slot is a defined
  * hole (see `slot.ts`), and the kernel's deterministic floor (trace, reconciler,
  * Mayor, Governor) runs with no actors bound at all. Actors are *enhancements*
- * plugged into defined hook points, and whatever an actor emits is still subject
- * to the same verification — an actor cannot lie past the reconciler or Mayor.
+ * plugged into defined hook points, and an actor's output is INERT: it is
+ * attached to the result for observation, influences no state, and is not
+ * itself verified. It cannot corrupt the floor because nothing downstream
+ * consumes it as truth — but inert is not the same as verified, and this
+ * comment says which one it is.
  *
  * A module can wrap a `Neuronet`: a skill-specialized model used like a hammer —
  * the right tool reached for a task, instead of retraining one monolith or

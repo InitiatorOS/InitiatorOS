@@ -130,8 +130,19 @@ export class Initiator {
     return this.log.length ? this.log[this.log.length - 1].hash : GENESIS
   }
 
+  /**
+   * The post-state an audit record commits to. It includes the module bus so a
+   * bind/unbind is fingerprinted, not just operations that move the trace head.
+   */
   private async stateDigest(): Promise<string> {
-    return sha256Hex(canonicalize({ head: this.head(), governor: this.governor.state, eventCount: this.log.length }))
+    return sha256Hex(
+      canonicalize({
+        head: this.head(),
+        governor: this.governor.state,
+        eventCount: this.log.length,
+        modules: this.bus.status(),
+      }),
+    )
   }
 
   /** The unbound slots — what the system knows is supposed to be there but isn't yet. */
@@ -248,12 +259,28 @@ export class Initiator {
   }
 
   /**
-   * The sole dispatch: run a function, then log it with a monotonic clock tick,
-   * its timing, whether it completed, and a digest of the resulting state. No
-   * state-affecting operation exists outside this path — that is the "no
-   * middleman" guarantee the zero-trust audit rests on.
+   * All dispatched operations run strictly one at a time, in arrival order.
+   * Without this, concurrent steps read the same chain head, all append off it,
+   * and last-write-wins silently drops events — an unlogged transition, the one
+   * thing this system exists to make impossible. Serializing here, in the sole
+   * dispatch, also makes tick order equal true execution order.
    */
-  private async audited<T>(fn: string, run: () => Promise<T> | T): Promise<T> {
+  private queue: Promise<unknown> = Promise.resolve()
+
+  /**
+   * The sole dispatch: queue the function, run it, then log it with a monotonic
+   * clock tick, its timing, whether it completed, and a digest of the resulting
+   * state. No state-affecting operation exists outside this path — that is the
+   * "no middleman" guarantee the zero-trust audit rests on.
+   */
+  private audited<T>(fn: string, run: () => Promise<T> | T): Promise<T> {
+    const next = this.queue.then(() => this.runAudited(fn, run))
+    // Keep the queue alive even when an operation throws.
+    this.queue = next.catch(() => undefined)
+    return next
+  }
+
+  private async runAudited<T>(fn: string, run: () => Promise<T> | T): Promise<T> {
     const startedAt = Date.now()
     const t0 = performance.now()
     let ok = true
