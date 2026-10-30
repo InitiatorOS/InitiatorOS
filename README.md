@@ -107,6 +107,20 @@ runtime; a module can wrap a **neuronet** — a skill-specialized model reached 
 like a hammer instead of retraining a monolith. The kernel runs with every slot
 empty and never bricks; binding a module is how it modifies its own performance.
 
+## Accounting for what can't be audited
+
+An inability to audit is input, not a footnote. Each such gap is declared as a
+variable in `lib/nodes/gaps.ts` and run through the first ISF subset on
+`initiator.account()`: **ISF_003** strips the sentence into five typed variables;
+**ISF_001** returns a binary authorization flag and an entropy delta and rejects
+proxy evidence such as "tests passed"; **ISF_004** ranks structural strain to
+name the choke-point; **ISF_002** measures what this substrate really can (audit
+timings), declares what it can't (power, thermal) as absent, and isolates a
+failing source autonomously; **ISF_005** audits the accounting itself — a gap
+that is only words interrupts and invalidates the whole pass. The layer is honest
+about itself by construction: it reports its own missing inputs and can reject
+its own output.
+
 ## Run it
 
 Requires Node ≥ 22.6 (for native TypeScript via `--experimental-strip-types`).
@@ -116,7 +130,7 @@ npm install        # dev deps: typescript, @types/node
 npm run typecheck  # tsc --noEmit
 npm test           # node --test over the suite
 npm run demo       # runtime only: trace + real floor probe, reconcile clean, then catch injected drift
-npm run os         # whole OS: boot → supervised steps → query → drift trips the breaker → reset → clocked audit
+npm run os         # whole OS: boot → supervised steps → query → drift trips the breaker → reset → failing actor isolated → node-layer accounting → clocked audit
 ```
 
 ## Layout
@@ -140,6 +154,15 @@ lib/modules/
   slot.ts          the self-building primitive — a typed hole that reports its own contract
   actor.ts         replaceable AI modules (3 distinct roles) + neuronet-as-tool seam
   bus.ts           the module bus — declare/bind/unbind slots, report requirements
+lib/nodes/          THE NODE LAYER (ISF_001–005) — accounting for what cannot be audited
+  types.ts         AuditGap, BoundaryState, IsolationCommand, Accounting, …
+  gaps.ts          the gap registry — every unauditable thing declared as a variable, derived live
+  isf003.ts        semantic decoupling — a gap's sentence → five typed variables
+  isf001.ts        invariant/constraint — binary authorization + entropy delta; proxies rejected
+  isf004.ts        causal tracing — strain per load-bearing pillar; choke-point ranking
+  isf002.ts        thermodynamic correction — real timings; absent inputs declared; failing sources isolated
+  isf005.ts        recursive metacognitive — interrupt on vocabulary, recalibrate on provenance
+  layer.ts         accountFor — the five engines as one pass
 lib/initiator/      THE INITIATOR — both bootloader and kernel, one root
   boot.ts          boot/attest — load + verify the chain, map the floor, seal the head
   initiator.ts     the Initiator — boot + supervise every transition + gated queries, all audited

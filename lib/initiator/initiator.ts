@@ -36,6 +36,12 @@ import { observe, type DoorObservation, type DoorView } from "../central/door.ts
 import { ModuleBus, createOsBus } from "../modules/bus.ts"
 import type { Actor } from "../modules/actor.ts"
 import type { SlotRequirement, SlotStatus } from "../modules/slot.ts"
+import { accountFor } from "../nodes/layer.ts"
+import { guardSource, isolateSource } from "../nodes/isf002.ts"
+import type { Accounting, IsolationCommand, NodeContext } from "../nodes/types.ts"
+
+/** How long an optional actor may take before ISF_002 isolates it. */
+const ACTOR_TIMEOUT_MS = 1000
 
 export interface SupervisoryResult {
   twins: TwinsResult
@@ -43,7 +49,7 @@ export interface SupervisoryResult {
   governor: GovernorDecision
   door: DoorObservation
   /** The Central AI module's observation, or null when its slot is unbound. */
-  central: { id: string; output: unknown } | null
+  central: { id: string; output: unknown; isolated?: IsolationCommand } | null
   /** The currently unbound slots — the self-defined roadblocks, reported live. */
   requirements: SlotRequirement[]
 }
@@ -73,6 +79,8 @@ export class Initiator {
   private readonly governor: Governor
   private readonly bus: ModuleBus
   private readonly audit: AuditLog
+  /** ISF_002 isolations this Initiator has enforced — a failing source, cut off at once. */
+  private readonly isolations: IsolationCommand[] = []
   readonly bootReport: BootReport
 
   private constructor(
@@ -153,6 +161,30 @@ export class Initiator {
   /** The state of every declared slot (bound/unbound). */
   modules(): SlotStatus[] {
     return this.bus.status()
+  }
+
+  /**
+   * Run the node layer (ISF_001–005) over everything the system cannot properly
+   * audit right now, and return the accounting. Audited like any other function.
+   */
+  async account(): Promise<Accounting> {
+    return this.audited("account", () => accountFor(this.nodeContext()))
+  }
+
+  /** ISF_002 isolations the Initiator has enforced so far. */
+  isolationLog(): readonly IsolationCommand[] {
+    return this.isolations
+  }
+
+  private nodeContext(): NodeContext {
+    return {
+      modules: this.bus.status(),
+      rep: project(this.log),
+      audit: this.audit.entries(),
+      isolations: this.isolations,
+      // Honest constant until the audit log is backed by a durable store.
+      auditPersisted: false,
+    }
   }
 
   /** A read-only view of the trace (for a host front end / inspector). */
@@ -252,9 +284,22 @@ export class Initiator {
       rho: project(this.log).floor.gated,
     }
     // The Central AI is optional: if its slot is bound, it observes the
-    // metadata-only DoorView; if not, the system continues without it.
+    // metadata-only DoorView; if not, the system continues without it. A source
+    // that throws or hangs is isolated at once (ISF_002): the system never bricks
+    // on a failing module, and no human is in that loop.
     const centralActor = this.bus.getActor("actor.central")
-    const central = centralActor ? { id: centralActor.id, output: await centralActor.invoke(view) } : null
+    let central: SupervisoryResult["central"] = null
+    if (centralActor) {
+      const outcome = await guardSource(centralActor, view, ACTOR_TIMEOUT_MS)
+      if (outcome.ok) {
+        central = { id: centralActor.id, output: outcome.output }
+      } else {
+        const cmd = isolateSource("actor.central", centralActor.id, outcome.error)
+        this.bus.unbind("actor.central")
+        this.isolations.push(cmd)
+        central = { id: centralActor.id, output: null, isolated: cmd }
+      }
+    }
     return { twins: t, mayor: m, governor: g, door: observe(view), central, requirements: this.bus.requirements() }
   }
 

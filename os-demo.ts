@@ -82,6 +82,30 @@ async function main(): Promise<void> {
     for (const t of q2.base.terms) line(`  ${t.rung}`, `${t.field} : ${t.type}`)
   }
 
+  console.log("\n== ISF_002: a failing source is isolated — no human in the loop ==")
+  await kernel.bindActor("actor.central", {
+    id: "broken-net",
+    kind: "central",
+    invoke: async () => {
+      throw new Error("model crashed")
+    },
+  })
+  const iso = await kernel.step({ type: "key", data: { code: 7 } })
+  line("central", iso.central?.isolated ? `ISOLATED — ${iso.central.isolated.reason}` : "ok")
+  line("governor", iso.governor.state)
+  line("holes after", String(iso.requirements.length))
+
+  console.log("\n== NODE LAYER ISF_001–005: accounting for what cannot be audited ==")
+  const acct = await kernel.account()
+  line("telemetry absent", acct.correction.telemetry.absent.join(", "))
+  line("total entropy", String(acct.totalEntropy))
+  line("authorized / gaps", `${acct.authorizedCount} / ${acct.gaps.length}`)
+  line("choke-point", acct.chokePoints[0])
+  line("signal / valid", `${acct.signal} / ${acct.valid}`)
+  for (const g of acct.gaps) {
+    line(`  ${g.gap.id}`, `auth=${g.constraint.authorized} ΔS=${g.constraint.entropyDelta} strain=${g.strain.strainIndex} → ${g.meta.signal}`)
+  }
+
   console.log("\n== AUDIT: every function, logged and clocked ==")
   const audited = await kernel.verifyAudit()
   line("clock (functions run)", String(kernel.clock()))

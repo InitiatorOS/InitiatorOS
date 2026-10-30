@@ -151,11 +151,11 @@ representations can be compared and sorted.
 
 | Node | Essence | Status here |
 | ---- | ------- | ----------- |
-| ISF_001 topological / invariant | collapse illegal states; classify boundaries | **Implemented** at the capability level (floor trichotomy, ρ). Silicon-timing/voltage *authentication* is Design-level and see the caution below. |
-| ISF_002 thermodynamic feedback | entropy/thermal anomaly → hard isolation | **Design-level.** Needs real power/thermal telemetry (hardware adapter). The "record-and-continue, never human-speed" posture is honored in code (probes degrade, never block). |
-| ISF_003 semantic decoupling | strip tokens → typed boundary state | **Partially implemented in spirit**: inputs are reduced to typed `RawEvent`s with explicit `data`, not free text. Full NL→invariant parsing is Design-level. |
-| ISF_004 multi-order causal tracing | trace downstream structural consequences | **Design-level.** |
-| ISF_005 metacognitive boundary audit | halt when logic relies on vocabulary substitution | Honored as a **design rule for this document and the code** (no faked layers), not a runtime component. |
+| ISF_001 topological / invariant | collapse illegal states; classify boundaries | **Implemented** — the floor trichotomy / ρ at the capability level, and `nodes/isf001.ts` as an engine over audit gaps: a binary authorization flag + entropy delta, with proxy evidence (tests-passed, documentation-asserts, author-attestation) explicitly rejected. Silicon-timing/voltage *authentication* stays Design-level (see the caution below). |
+| ISF_002 thermodynamic feedback | entropy/thermal anomaly → hard isolation | **Implemented as far as this substrate can measure** (`nodes/isf002.ts`): baselines on real audit timings, declares power-rail / thermal / bus-density **absent** rather than faking them, and performs autonomous isolation — a bound actor that throws or hangs is cut off at once, no human in the loop, the system continuing. A latency anomaly is recorded, never enforced: timing in a GC'd runtime is a software proxy (ISF_001). |
+| ISF_003 semantic decoupling | strip tokens → typed boundary state | **Implemented** (`nodes/isf003.ts`): a gap's sentence is never read; it is forced into five mechanical variables — observed / observer / invariant / persistence / independence — each present or absent. Runtime inputs are likewise typed `RawEvent`s, not free text. Full NL→invariant parsing remains Design-level. |
+| ISF_004 multi-order causal tracing | trace downstream structural consequences | **Implemented** (`nodes/isf004.ts`): strain = the weight of every load-bearing pillar resting on a gap × severity; a gap on one pillar is flagged horizontal (bounded). Produces the choke-point ranking — which gap to close first. The pillar weights are a declared model, not a measurement. |
+| ISF_005 metacognitive boundary audit | halt when logic relies on vocabulary substitution | **Implemented** (`nodes/isf005.ts`), and still the design rule for this document: a gap naming no observable is vocabulary → **interrupt** (the whole accounting is marked invalid); a gap anchored only to provenance → **recalibrate** to its minimum requirement; only physical anchors proceed. |
 | ISF_006 "the Twins" | dual-track cross-check, sealed root | Root-sealing is **Implemented** (append-only chain); dual-track parity is Design-level. |
 | ISF_007 State Transition Door | observe metadata only, no raw pointers | **Seam/Design-level.** `ReconcileReport` is exactly a metadata view; wiring a reasoning layer to *only* that is a clean next step. |
 | ISF_008 sterile debug firewall | quarantine diagnostic sessions | **Design-level.** |
@@ -243,6 +243,34 @@ A sufficient verdict carries the grounded `representation`, the `derivation`
   carry a *freshness* or *quorum* requirement (e.g. ρ must be backed by a probe
   within N events), that is a clean extension point.
 
+## The node layer (ISF_001–005): accounting for what cannot be audited
+
+The first subset of ISF nodes is the machinery for an inability to audit. A gap
+is never merely listed; it is declared as a variable (`nodes/gaps.ts`) and run
+through the five engines (`nodes/layer.ts`), and the Initiator exposes the pass
+as an audited function: `initiator.account()`.
+
+```
+  gap ──► ISF_003 decouple ──► ISF_001 constrain ──► ISF_004 trace ──► ISF_005 reflect
+          five typed vars       authorized? ΔS        strain, pillars    proceed / recalibrate /
+          (no prose survives)   proxies rejected      choke-point rank   interrupt (rejects all)
+
+  runtime ──► ISF_002 correct: real timings baselined; power / thermal declared ABSENT;
+              a failing source isolated at once (applied); a latency anomaly recorded (not applied)
+```
+
+Live figures from `npm run os` in this Node runtime: 6 gaps present, 2
+authorized, total entropy 2.6, choke-point `single-author-twins` (strain 11 —
+it rests on every test-backed claim), signal `recalibrate` (provenance cannot be
+relabeled away), accounting `valid`. In the same run a failing Central actor was
+isolated with the Governor still nominal and its slot back to a defined hole.
+
+Two honesty properties the layer enforces on itself: each node declares which of
+its own named inputs this substrate can actually supply (ISF_002 reports
+power-rail, thermal and bus-density absent), and ISF_005 can reject the entire
+accounting — if any gap is words rather than an observable, `valid` is false and
+no summary number from the pass may be relied on.
+
 ## Verification ledger — proven vs. absent
 
 The framework applied to its own verification. Only what was executed and
@@ -258,7 +286,10 @@ unlogged transitions, undetected because the chain stayed valid. It was
 reproduced, fixed in `Initiator.audited` (the sole dispatch now queues every
 operation), and guarded by a regression test.
 
-**Absent — exercised nowhere yet:**
+**Absent — exercised nowhere yet.** These are no longer only listed here: each is
+a declared variable in `nodes/gaps.ts` and is processed by the node layer on
+every `initiator.account()` — authorization, entropy, strain, isolation, and a
+self-check (see "The node layer" above). The list:
 
 - The audit log is in-memory; it does not persist across restarts.
 - Boot is clocked as one tick; its sub-steps are not individually logged.
